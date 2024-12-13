@@ -1,51 +1,73 @@
-const express = require("express");
-const puppeteer = require("puppeteer");
+const express = require('express');
+const axios = require('axios');
+
 const app = express();
 const PORT = 3000;
-const getPlayerStats = async (player) => {
+
+app.use(express.json());
+
+const getRankedData = async (gameName, tagLine, apiKey) => {
   try {
-    const browser = await puppeteer.launch();
-    const page = await browser.newPage();
-    await page.goto("https://soloboom.net/lowelo", { waitUntil: "networkidle2" });
-    await page.waitForSelector("tr.table-complete");
-    const rows = await page.$$eval("tr.table-complete", (rows) => {
-      return rows.map((row) => {
-        const cells = Array.from(row.querySelectorAll("th.table-list"));
-        return cells.map((cell) => cell.innerText.trim());
-      });
+    const accountUrl = `https://americas.api.riotgames.com/riot/account/v1/accounts/by-riot-id/${gameName}/${tagLine}`;
+    const accountResponse = await axios.get(accountUrl, {
+      headers: { 'X-Riot-Token': apiKey },
+    });
+    const puuid = accountResponse.data.puuid;
+    const summonerUrl = `https://la2.api.riotgames.com/lol/summoner/v4/summoners/by-puuid/${puuid}`;
+    const summonerResponse = await axios.get(summonerUrl, {
+      headers: { 'X-Riot-Token': apiKey },
+    });
+    const summonerId = summonerResponse.data.id;
+    const rankedUrl = `https://la2.api.riotgames.com/lol/league/v4/entries/by-summoner/${summonerId}`;
+    const rankedResponse = await axios.get(rankedUrl, {
+      headers: { 'X-Riot-Token': apiKey },
     });
 
-    await browser.close();
-    const playerRow = rows.find((row) => row[2]?.toLowerCase() === player.toLowerCase());
-    if (!playerRow) {
-      throw new Error(`Player ${player} not found.`);
-    }
-    const playerStats = {
-      position: playerRow[0], 
-      name: playerRow[2],
-      wins: playerRow[7], 
-      losses: playerRow[8], 
-      totalGames: playerRow[9], 
-    };
-
-    return playerStats;
+    return rankedResponse.data;
   } catch (error) {
-    console.error(error.message);
-    return null;
+    if (error.response && error.response.status === 403) {
+      console.error(`Error 403: Clave API inválida o bloqueada para ${gameName}#${tagLine}`);
+    } else {
+      console.error(`Error al procesar ${gameName}#${tagLine}:`, error.response ? error.response.data : error.message);
+    }
+    throw new Error(`No se pudo obtener la información del usuario ${gameName}#${tagLine}`);
   }
 };
-app.get("/player/:name", async (req, res) => {
-  const playerName = req.params.name;
-  const stats = await getPlayerStats(playerName);
 
-  if (stats) {
-    const formatted = `El jugador ${stats.name} está número ${stats.position} en la tabla, con ${stats.wins} victorias - ${stats.losses} derrotas, un total de ${stats.totalGames} partidas.`;
-    res.send(formatted);
-  } else {
-    res.status(404).send(`Player ${playerName} not found.`);
+app.get('/ranked/:gameName/:tagLine', async (req, res) => {
+  const { gameName, tagLine } = req.params;
+  const apiKey = 'RGAPI-8999b5ff-6d53-47c8-ad42-781362971374';
+
+  try {
+    const rankedData = await getRankedData(gameName, tagLine, apiKey);
+    res.json(rankedData);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/ranked/batch', async (req, res) => {
+  const users = req.body.users; 
+  const apiKey = 'TU_API_KEY'; 
+
+  try {
+    const results = await Promise.all(
+      users.map(async (user) => {
+        try {
+          const rankedData = await getRankedData(user.gameName, user.tagLine, apiKey);
+          return { user: `${user.gameName}#${user.tagLine}`, data: rankedData };
+        } catch (error) {
+          return { user: `${user.gameName}#${user.tagLine}`, error: error.message };
+        }
+      })
+    );
+
+    res.json(results);
+  } catch (error) {
+    res.status(500).json({ error: 'Error al procesar la solicitud en lote.' });
   }
 });
 
 app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+  console.log(`Servidor corriendo en http://localhost:${PORT}`);
 });
