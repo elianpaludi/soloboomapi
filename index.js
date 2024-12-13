@@ -3,6 +3,8 @@ const axios = require('axios');
 
 const app = express();
 const PORT = 3000;
+require('dotenv').config();
+
 
 app.use(express.json());
 
@@ -36,7 +38,7 @@ const getRankedData = async (gameName, tagLine, apiKey) => {
 
 app.get('/ranked/:gameName/:tagLine', async (req, res) => {
   const { gameName, tagLine } = req.params;
-  const apiKey = 'RGAPI-8999b5ff-6d53-47c8-ad42-781362971374';
+  const apiKey = process.env.RIOT_API_KEY;
 
   try {
     const rankedData = await getRankedData(gameName, tagLine, apiKey);
